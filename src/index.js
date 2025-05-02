@@ -18,8 +18,8 @@ const forwardVector = new THREE.Vector3(0, 0, -1);
 const bulletSpeed = 10;
 const bulletTimeToLive = 1;
 
-const blasterGroup = new THREE.Group();
-const leftBlasterGroup = new THREE.Group();
+const rightHandGroup = new THREE.Group();
+const leftHandGroup = new THREE.Group();
 const targets = [];
 
 let score = 0;
@@ -32,6 +32,12 @@ scoreText.anchorX = 'center';
 scoreText.anchorY = 'middle';
 
 let laserSound, leftLaserSound, scoreSound;
+let rightHandOpenMesh = null;
+let rightHandFistMesh = null;
+let rightHandIsFist = false;
+let leftHandOpenMesh = null;
+let leftHandFistMesh = null;
+let leftHandIsFist = false;
 
 function updateScoreDisplay() {
 	const clampedScore = Math.max(0, Math.min(9999, score));
@@ -41,15 +47,45 @@ function updateScoreDisplay() {
 }
 
 function setupScene({ scene, camera, renderer, player, controllers }) {
+	scene.background = new THREE.Color(0x87CEEB);
 	const gltfLoader = new GLTFLoader();
 
-	gltfLoader.load('assets/spacestation.glb', (gltf) => {
+	gltfLoader.load('assets/football_court.glb', (gltf) => {
+		gltf.scene.position.y = 0;
+		gltf.scene.scale.set(6, 6, 6);
 		scene.add(gltf.scene);
 	});
 
-	gltfLoader.load('assets/blaster.glb', (gltf) => {
-		blasterGroup.add(gltf.scene);
-		leftBlasterGroup.add(gltf.scene.clone());
+	gltfLoader.load('assets/gorilla_hand.glb', (gltf) => {
+		gltf.scene.scale.set(0.33, 0.33, 0.33);
+		gltf.scene.scale.x *= -1;
+		gltf.scene.rotation.y = -Math.PI / 2;
+		gltf.scene.rotation.x = -Math.PI / 2;
+		rightHandOpenMesh = gltf.scene;
+		rightHandGroup.add(rightHandOpenMesh);
+	});
+
+	gltfLoader.load('assets/fist.glb', (gltf) => {
+		gltf.scene.scale.set(0.33, 0.33, 0.33);
+		gltf.scene.scale.x *= -1;
+		gltf.scene.rotation.y = -Math.PI / 2;
+		gltf.scene.rotation.x = -Math.PI / 2;
+		rightHandFistMesh = gltf.scene;
+	});
+
+	gltfLoader.load('assets/gorilla_hand.glb', (gltf) => {
+		gltf.scene.scale.set(0.33, 0.33, 0.33);
+		gltf.scene.rotation.y = Math.PI / 2;
+		gltf.scene.rotation.x = -Math.PI / 2;
+		leftHandOpenMesh = gltf.scene;
+		leftHandGroup.add(leftHandOpenMesh);
+	});
+
+	gltfLoader.load('assets/fist.glb', (gltf) => {
+		gltf.scene.scale.set(0.33, 0.33, 0.33);
+		gltf.scene.rotation.y = Math.PI / 2;
+		gltf.scene.rotation.x = -Math.PI / 2;
+		leftHandFistMesh = gltf.scene;
 	});
 
 	gltfLoader.load('assets/target.glb', (gltf) => {
@@ -80,14 +116,14 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	laserSound = new THREE.PositionalAudio(listener);
 	audioLoader.load('assets/laser.ogg', (buffer) => {
 		laserSound.setBuffer(buffer);
-		blasterGroup.add(laserSound);
+		rightHandGroup.add(laserSound);
 	});
 
 	// Left controller laser sound
 	leftLaserSound = new THREE.PositionalAudio(listener);
 	audioLoader.load('assets/laser.ogg', (buffer) => {
 		leftLaserSound.setBuffer(buffer);
-		leftBlasterGroup.add(leftLaserSound);
+		leftHandGroup.add(leftLaserSound);
 	});
 
 	scoreSound = new THREE.PositionalAudio(listener);
@@ -105,36 +141,23 @@ function onFrame(
 	// Handle right controller
 	if (controllers.right) {
 		const { gamepad, raySpace, mesh } = controllers.right;
-		if (!raySpace.children.includes(blasterGroup)) {
-			raySpace.add(blasterGroup);
+		if (!raySpace.children.includes(rightHandGroup)) {
+			raySpace.add(rightHandGroup);
 			mesh.visible = false;
 		}
-		if (gamepad.getButtonClick(XR_BUTTONS.TRIGGER)) {
-			try {
-				gamepad.getHapticActuator(0).pulse(0.6, 100);
-			} catch {
-				// do nothing
+
+		// Swap to fist on trigger press, open on release
+		if (gamepad.getButtonValue(XR_BUTTONS.TRIGGER) > 0.5) {
+			if (!rightHandIsFist && rightHandFistMesh && rightHandOpenMesh) {
+				rightHandGroup.remove(rightHandOpenMesh);
+				rightHandGroup.add(rightHandFistMesh);
+				rightHandIsFist = true;
 			}
-
-			// Play laser sound
-			if (laserSound.isPlaying) laserSound.stop();
-			laserSound.play();
-
-			const bulletPrototype = blasterGroup.getObjectByName('bullet');
-			if (bulletPrototype) {
-				const bullet = bulletPrototype.clone();
-				scene.add(bullet);
-				bulletPrototype.getWorldPosition(bullet.position);
-				bulletPrototype.getWorldQuaternion(bullet.quaternion);
-
-				const directionVector = forwardVector
-					.clone()
-					.applyQuaternion(bullet.quaternion);
-				bullet.userData = {
-					velocity: directionVector.multiplyScalar(bulletSpeed),
-					timeToLive: bulletTimeToLive,
-				};
-				bullets[bullet.uuid] = bullet;
+		} else {
+			if (rightHandIsFist && rightHandFistMesh && rightHandOpenMesh) {
+				rightHandGroup.remove(rightHandFistMesh);
+				rightHandGroup.add(rightHandOpenMesh);
+				rightHandIsFist = false;
 			}
 		}
 	}
@@ -142,89 +165,34 @@ function onFrame(
 	// Handle left controller
 	if (controllers.left) {
 		const { gamepad, raySpace, mesh } = controllers.left;
-		if (!raySpace.children.includes(leftBlasterGroup)) {
-			raySpace.add(leftBlasterGroup);
+		if (!raySpace.children.includes(leftHandGroup)) {
+			raySpace.add(leftHandGroup);
 			mesh.visible = false;
 		}
+
+		// Swap to fist on trigger press, open on release
+		if (gamepad.getButtonValue(XR_BUTTONS.TRIGGER) > 0.5) {
+			if (!leftHandIsFist && leftHandFistMesh && leftHandOpenMesh) {
+				leftHandGroup.remove(leftHandOpenMesh);
+				leftHandGroup.add(leftHandFistMesh);
+				leftHandIsFist = true;
+			}
+		} else {
+			if (leftHandIsFist && leftHandFistMesh && leftHandOpenMesh) {
+				leftHandGroup.remove(leftHandFistMesh);
+				leftHandGroup.add(leftHandOpenMesh);
+				leftHandIsFist = false;
+			}
+		}
+
 		if (gamepad.getButtonClick(XR_BUTTONS.TRIGGER)) {
 			try {
 				gamepad.getHapticActuator(0).pulse(0.6, 100);
 			} catch {
 				// do nothing
 			}
-
-			// Play laser sound
-			if (leftLaserSound.isPlaying) leftLaserSound.stop();
-			leftLaserSound.play();
-
-			const bulletPrototype = leftBlasterGroup.getObjectByName('bullet');
-			if (bulletPrototype) {
-				const bullet = bulletPrototype.clone();
-				scene.add(bullet);
-				bulletPrototype.getWorldPosition(bullet.position);
-				bulletPrototype.getWorldQuaternion(bullet.quaternion);
-
-				const directionVector = forwardVector
-					.clone()
-					.applyQuaternion(bullet.quaternion);
-				bullet.userData = {
-					velocity: directionVector.multiplyScalar(bulletSpeed),
-					timeToLive: bulletTimeToLive,
-				};
-				bullets[bullet.uuid] = bullet;
-			}
 		}
 	}
-
-	Object.values(bullets).forEach((bullet) => {
-		if (bullet.userData.timeToLive < 0) {
-			delete bullets[bullet.uuid];
-			scene.remove(bullet);
-			return;
-		}
-		const deltaVec = bullet.userData.velocity.clone().multiplyScalar(delta);
-		bullet.position.add(deltaVec);
-		bullet.userData.timeToLive -= delta;
-
-		targets
-			.filter((target) => target.visible)
-			.forEach((target) => {
-				const distance = target.position.distanceTo(bullet.position);
-				if (distance < 1) {
-					delete bullets[bullet.uuid];
-					scene.remove(bullet);
-
-					gsap.to(target.scale, {
-						duration: 0.3,
-						x: 0,
-						y: 0,
-						z: 0,
-						onComplete: () => {
-							target.visible = false;
-							setTimeout(() => {
-								target.visible = true;
-								target.position.x = Math.random() * 10 - 5;
-								target.position.z = -Math.random() * 5 - 5;
-
-								// Scale back up the target
-								gsap.to(target.scale, {
-									duration: 0.3,
-									x: 1,
-									y: 1,
-									z: 1,
-								});
-							}, 1000);
-						},
-					});
-
-					score += 10;
-					updateScoreDisplay();
-					if (scoreSound.isPlaying) scoreSound.stop();
-					scoreSound.play();
-				}
-			});
-	});
-	gsap.ticker.tick(delta);
 }
 
 init(setupScene, onFrame);

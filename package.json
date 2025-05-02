@@ -20,6 +20,7 @@
 	},
 	"dependencies": {
 		"@iwer/devui": "0.1.1",
+		"cannon-es": "^0.20.0",
 		"gamepad-wrapper": "1.3.4",
 		"gsap": "3.12.5",
 		"iwer": "1.0.4",
