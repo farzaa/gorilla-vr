@@ -39,6 +39,8 @@ let leftHandOpenMesh = null;
 let leftHandFistMesh = null;
 let leftHandIsFist = false;
 
+let soundtrack = null;
+
 function updateScoreDisplay() {
 	const clampedScore = Math.max(0, Math.min(9999, score));
 	const displayScore = clampedScore.toString().padStart(4, '0');
@@ -130,6 +132,13 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	audioLoader.load('assets/score.ogg', (buffer) => {
 		scoreSound.setBuffer(buffer);
 		scoreText.add(scoreSound);
+	});
+
+	audioLoader.load('assets/soundtrack.mp3', (buffer) => {
+		soundtrack = new THREE.Audio(listener);
+		soundtrack.setBuffer(buffer);
+		soundtrack.loop = true;
+		soundtrack.play();
 	});
 }
 
