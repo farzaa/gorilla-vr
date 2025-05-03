@@ -50,6 +50,11 @@ let punchCount = 0;
 const PUNCH_DISTANCE = 2.0;
 const MAX_PUNCHES = 2;
 
+// Array to store multiple characters and their ragdolls
+const characters = [];
+const ragdolls = [];
+const NUM_CHARACTERS = 10;
+
 let lastCollisionCheck = 0;
 const COLLISION_CHECK_INTERVAL = 100; // Check every 100ms
 
@@ -575,106 +580,119 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	directionalLight.castShadow = true;
 	scene.add(directionalLight);
 
-	// Load the walking character
-	fbxLoader.load('assets/Walking.fbx', (walkingFbx) => {
-		walkingFbx.scale.setScalar(0.015);
-		walkingFbx.position.set(0, 0, -15);
-		scene.add(walkingFbx);
-		walkingCharacter = walkingFbx;
+	// Load the walking character for each instance
+	for (let i = 0; i < NUM_CHARACTERS; i++) {
+		fbxLoader.load('assets/Walking.fbx', (walkingFbx) => {
+			walkingFbx.scale.setScalar(0.015);
+			// Position characters in a circle around the player
+			const angle = (i / NUM_CHARACTERS) * Math.PI * 2;
+			const radius = 15;
+			walkingFbx.position.set(
+				Math.cos(angle) * radius,
+				0,
+				Math.sin(angle) * radius,
+			);
+			scene.add(walkingFbx);
 
-		// Set up animation mixer
-		characterMixer = new THREE.AnimationMixer(walkingFbx);
+			const character = {
+				model: walkingFbx,
+				mixer: new THREE.AnimationMixer(walkingFbx),
+				walkAction: null,
+				punchAction: null,
+				punchCount: 0,
+				isActive: true,
+			};
+			characters.push(character);
 
-		// Load punching animation
-		fbxLoader.load('assets/Punching.fbx', (punchingFbx) => {
-			if (
-				walkingFbx.animations.length > 0 &&
-				punchingFbx.animations.length > 0
-			) {
-				// Set up walking animation
-				walkAction = characterMixer.clipAction(walkingFbx.animations[0]);
-				walkAction.loop = THREE.LoopRepeat;
-				walkAction.play();
+			// Set up animation mixer
+			character.mixer = new THREE.AnimationMixer(walkingFbx);
 
-				// Set up punching animation
-				punchAction = characterMixer.clipAction(punchingFbx.animations[0]);
-				punchAction.loop = THREE.LoopOnce;
-				punchAction.enabled = false;
-				punchAction.clampWhenFinished = true;
+			// Load punching animation
+			fbxLoader.load('assets/Punching.fbx', (punchingFbx) => {
+				if (
+					walkingFbx.animations.length > 0 &&
+					punchingFbx.animations.length > 0
+				) {
+					// Set up walking animation
+					character.walkAction = character.mixer.clipAction(
+						walkingFbx.animations[0],
+					);
+					character.walkAction.loop = THREE.LoopRepeat;
+					character.walkAction.play();
 
-				// Add mixer event listener for when punch animation completes
-				characterMixer.addEventListener('finished', (e) => {
-					if (e.action === punchAction) {
-						console.log('Punch animation finished event triggered');
-						punchCount++;
-						console.log('Punch completed, count:', punchCount);
+					// Set up punching animation
+					character.punchAction = character.mixer.clipAction(
+						punchingFbx.animations[0],
+					);
+					character.punchAction.loop = THREE.LoopOnce;
+					character.punchAction.enabled = false;
+					character.punchAction.clampWhenFinished = true;
 
-						if (punchCount >= MAX_PUNCHES) {
-							console.log('Creating ragdoll...');
-							// Get the character's current position
-							const charPosition = new CANNON.Vec3(
-								walkingCharacter.position.x,
-								walkingCharacter.position.y,
-								walkingCharacter.position.z,
-							);
+					// Add mixer event listener for when punch animation completes
+					character.mixer.addEventListener('finished', (e) => {
+						if (e.action === character.punchAction) {
+							character.punchCount++;
 
-							// Create a new ragdoll at the character's position with 50% larger scale
-							const newRagdoll = createRagdoll(1.75, charPosition);
-							scene.add(newRagdoll.group);
+							if (character.punchCount >= MAX_PUNCHES) {
+								// Get the character's current position
+								const charPosition = new CANNON.Vec3(
+									character.model.position.x,
+									character.model.position.y,
+									character.model.position.z,
+								);
 
-							// Configure ragdoll physics
-							newRagdoll.bodies.forEach((body) => {
-								// Set proper mass and damping
-								body.mass = 5; // Increase mass for better physics response
-								body.linearDamping = 0.1; // Reduce linear damping
-								body.angularDamping = 0.1; // Reduce angular damping
+								// Create a new ragdoll at the character's position with 50% larger scale
+								const newRagdoll = createRagdoll(1.75, charPosition);
+								scene.add(newRagdoll.group);
+								ragdolls.push(newRagdoll);
 
-								// Set material properties
-								body.material = new CANNON.Material({
-									friction: 0.3,
-									restitution: 0.3,
+								// Configure ragdoll physics with unique properties
+								newRagdoll.bodies.forEach((body) => {
+									body.mass = 5 + Math.random() * 3; // Random mass between 5-8
+									body.linearDamping = 0.1 + Math.random() * 0.1; // Random damping
+									body.angularDamping = 0.1 + Math.random() * 0.1;
+									body.material = new CANNON.Material({
+										friction: 0.3 + Math.random() * 0.2,
+										restitution: 0.3 + Math.random() * 0.2,
+									});
+									world.addBody(body);
 								});
 
-								// Add to world
-								world.addBody(body);
-							});
+								// Add constraints to world
+								newRagdoll.constraints.forEach((constraint) => {
+									world.addConstraint(constraint);
+								});
 
-							// Add constraints to world
-							newRagdoll.constraints.forEach((constraint) => {
-								world.addConstraint(constraint);
-							});
+								// Remove the character model from the scene
+								scene.remove(character.model);
+								character.isActive = false;
 
-							// Remove the character model from the scene
-							scene.add(newRagdoll.group);
-							scene.remove(walkingCharacter);
-							walkingCharacter = null;
+								// Apply initial forces to make it look more dynamic
+								newRagdoll.bodies.forEach((body) => {
+									const force = new CANNON.Vec3(
+										(Math.random() - 0.5) * 500,
+										Math.random() * 500,
+										(Math.random() - 0.5) * 500,
+									);
+									body.applyForce(force, body.position);
 
-							// Apply stronger random forces to make it look more dynamic
-							newRagdoll.bodies.forEach((body) => {
-								const force = new CANNON.Vec3(
-									(Math.random() - 0.5) * 500, // Increased force
-									Math.random() * 500, // Increased force
-									(Math.random() - 0.5) * 500, // Increased force
-								);
-								body.applyForce(force, body.position);
-
-								// Add some angular velocity for more dynamic movement
-								body.angularVelocity.set(
-									(Math.random() - 0.5) * 5,
-									(Math.random() - 0.5) * 5,
-									(Math.random() - 0.5) * 5,
-								);
-							});
-						} else {
-							// Switch back to walking after punch completes
-							walkAction.enabled = true;
-							walkAction.play();
+									body.angularVelocity.set(
+										(Math.random() - 0.5) * 5,
+										(Math.random() - 0.5) * 5,
+										(Math.random() - 0.5) * 5,
+									);
+								});
+							} else {
+								// Switch back to walking after punch completes
+								character.walkAction.enabled = true;
+								character.walkAction.play();
+							}
 						}
-					}
-				});
-			}
+					});
+				}
+			});
 		});
-	});
+	}
 
 	gltfLoader.load('assets/football_court.glb', (gltf) => {
 		gltf.scene.position.y = 0;
@@ -774,150 +792,153 @@ function onFrame(
 	// Update physics world with fixed time step
 	world.step(1 / 90); // Increased physics update rate for smoother VR
 
-	// Update character animation
-	if (characterMixer) {
-		characterMixer.update(delta);
-	}
+	// Update character animations
+	characters.forEach((character) => {
+		if (character.mixer) {
+			character.mixer.update(delta);
+		}
+	});
 
 	// Update ragdoll meshes to match physics bodies
-	if (walkingCharacter === null) {
-		// Find the ragdoll group in the scene
-		const ragdollGroup = scene.children.find(
-			(child) =>
-				child instanceof THREE.Group &&
-				child.children.length > 0 &&
-				child.children.some(
-					(mesh) =>
-						mesh instanceof THREE.Mesh &&
-						mesh.material &&
-						mesh.material.color &&
-						mesh.material.color.getHex() === 0xff0000,
-				),
-		);
+	ragdolls.forEach((ragdoll) => {
+		if (!ragdoll.group.parent) return; // Skip if ragdoll was removed
 
-		if (ragdollGroup) {
-			// Get the ragdoll bodies from the world
-			const ragdollBodies = world.bodies.filter(
-				(body) =>
-					body.mass > 0 &&
-					body.shapes.some(
-						(shape) =>
-							shape instanceof CANNON.Box || shape instanceof CANNON.Sphere,
-					),
-			);
+		// Update each mesh to match its corresponding physics body
+		ragdoll.group.children.forEach((mesh, index) => {
+			if (mesh instanceof THREE.Mesh && ragdoll.bodies[index]) {
+				mesh.position.copy(ragdoll.bodies[index].position);
+				mesh.quaternion.copy(ragdoll.bodies[index].quaternion);
+			}
+		});
 
-			// Update each mesh to match its corresponding physics body
-			ragdollGroup.children.forEach((mesh, index) => {
-				if (mesh instanceof THREE.Mesh && ragdollBodies[index]) {
-					mesh.position.copy(ragdollBodies[index].position);
-					mesh.quaternion.copy(ragdollBodies[index].quaternion);
-				}
+		// Apply continuous forces to make ragdolls more dynamic
+		if (Math.random() < 0.1) {
+			// 10% chance each frame
+			ragdoll.bodies.forEach((body) => {
+				const force = new CANNON.Vec3(
+					(Math.random() - 0.5) * 100, // Smaller continuous forces
+					Math.random() * 50,
+					(Math.random() - 0.5) * 100,
+				);
+				body.applyForce(force, body.position);
+
+				// Add some random angular velocity
+				body.angularVelocity.set(
+					(Math.random() - 0.5) * 2,
+					(Math.random() - 0.5) * 2,
+					(Math.random() - 0.5) * 2,
+				);
 			});
 		}
-	}
+	});
 
-	// Move character towards player
-	if (walkingCharacter) {
-		const playerPosition = new THREE.Vector3();
-		player.getWorldPosition(playerPosition);
+	// Move characters towards player
+	const playerPosition = new THREE.Vector3();
+	player.getWorldPosition(playerPosition);
+
+	characters.forEach((character) => {
+		if (!character.isActive) return;
 
 		// Calculate direction to player
 		const direction = new THREE.Vector3();
-		direction.subVectors(playerPosition, walkingCharacter.position).normalize();
+		direction.subVectors(playerPosition, character.model.position).normalize();
 
 		// Calculate distance to player
-		const distance = walkingCharacter.position.distanceTo(playerPosition);
+		const distance = character.model.position.distanceTo(playerPosition);
 
 		// Move character towards player if not too close
 		if (distance > PUNCH_DISTANCE) {
 			const moveSpeed = 0.03;
-			walkingCharacter.position.add(direction.multiplyScalar(moveSpeed));
-			walkingCharacter.lookAt(playerPosition);
+			character.model.position.add(direction.multiplyScalar(moveSpeed));
+			character.model.lookAt(playerPosition);
 		}
 
 		// Switch animations based on distance
 		if (distance <= PUNCH_DISTANCE) {
-			if (walkAction && walkAction.isRunning()) {
-				walkAction.stop();
-				if (punchAction) {
-					punchAction.enabled = true;
-					punchAction.reset();
-					punchAction.play();
+			if (character.walkAction && character.walkAction.isRunning()) {
+				character.walkAction.stop();
+				if (character.punchAction) {
+					character.punchAction.enabled = true;
+					character.punchAction.reset();
+					character.punchAction.play();
 				}
 			}
 		} else {
-			if (punchAction && punchAction.isRunning()) {
-				punchAction.stop();
-				if (walkAction) {
-					walkAction.enabled = true;
-					walkAction.play();
+			if (character.punchAction && character.punchAction.isRunning()) {
+				character.punchAction.stop();
+				if (character.walkAction) {
+					character.walkAction.enabled = true;
+					character.walkAction.play();
 				}
 			}
 		}
-	}
+	});
 
-	// Check for collision between hands and character
-	if (
-		walkingCharacter &&
-		time - lastCollisionCheck >= COLLISION_CHECK_INTERVAL
-	) {
+	// Check for collision between hands and characters
+	if (time - lastCollisionCheck >= COLLISION_CHECK_INTERVAL) {
 		lastCollisionCheck = time;
-		const characterBox = new THREE.Box3().setFromObject(walkingCharacter);
 		const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
 		const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
 
-		if (
-			rightHandBox.intersectsBox(characterBox) ||
-			leftHandBox.intersectsBox(characterBox)
-		) {
-			// Get the character's current position
-			const charPosition = new CANNON.Vec3(
-				walkingCharacter.position.x,
-				walkingCharacter.position.y,
-				walkingCharacter.position.z,
-			);
+		characters.forEach((character) => {
+			if (!character.isActive) return;
 
-			// Create a new ragdoll at the character's position
-			const newRagdoll = createRagdoll(1.75, charPosition);
-			scene.add(newRagdoll.group);
+			const characterBox = new THREE.Box3().setFromObject(character.model);
 
-			// Configure ragdoll physics
-			newRagdoll.bodies.forEach((body) => {
-				body.mass = 5;
-				body.linearDamping = 0.1;
-				body.angularDamping = 0.1;
-				body.material = new CANNON.Material({
-					friction: 0.3,
-					restitution: 0.3,
+			if (
+				rightHandBox.intersectsBox(characterBox) ||
+				leftHandBox.intersectsBox(characterBox)
+			) {
+				// Get the character's current position
+				const charPosition = new CANNON.Vec3(
+					character.model.position.x,
+					character.model.position.y,
+					character.model.position.z,
+				);
+
+				// Create a new ragdoll at the character's position
+				const newRagdoll = createRagdoll(1.75, charPosition);
+				scene.add(newRagdoll.group);
+				ragdolls.push(newRagdoll);
+
+				// Configure ragdoll physics with unique properties
+				newRagdoll.bodies.forEach((body) => {
+					body.mass = 5 + Math.random() * 3; // Random mass between 5-8
+					body.linearDamping = 0.1 + Math.random() * 0.1;
+					body.angularDamping = 0.1 + Math.random() * 0.1;
+					body.material = new CANNON.Material({
+						friction: 0.3 + Math.random() * 0.2,
+						restitution: 0.3 + Math.random() * 0.2,
+					});
+					world.addBody(body);
 				});
-				world.addBody(body);
-			});
 
-			// Add constraints to world
-			newRagdoll.constraints.forEach((constraint) => {
-				world.addConstraint(constraint);
-			});
+				// Add constraints to world
+				newRagdoll.constraints.forEach((constraint) => {
+					world.addConstraint(constraint);
+				});
 
-			// Remove the character model from the scene
-			scene.remove(walkingCharacter);
-			walkingCharacter = null;
+				// Remove the character model from the scene
+				scene.remove(character.model);
+				character.isActive = false;
 
-			// Apply forces to make it look more dynamic
-			newRagdoll.bodies.forEach((body) => {
-				const force = new CANNON.Vec3(
-					(Math.random() - 0.5) * 500,
-					Math.random() * 500,
-					(Math.random() - 0.5) * 500,
-				);
-				body.applyForce(force, body.position);
+				// Apply initial forces to make it look more dynamic
+				newRagdoll.bodies.forEach((body) => {
+					const force = new CANNON.Vec3(
+						(Math.random() - 0.5) * 500,
+						Math.random() * 500,
+						(Math.random() - 0.5) * 500,
+					);
+					body.applyForce(force, body.position);
 
-				body.angularVelocity.set(
-					(Math.random() - 0.5) * 5,
-					(Math.random() - 0.5) * 5,
-					(Math.random() - 0.5) * 5,
-				);
-			});
-		}
+					body.angularVelocity.set(
+						(Math.random() - 0.5) * 5,
+						(Math.random() - 0.5) * 5,
+						(Math.random() - 0.5) * 5,
+					);
+				});
+			}
+		});
 	}
 
 	// Update hand physics bodies
