@@ -50,10 +50,22 @@ let punchCount = 0;
 const PUNCH_DISTANCE = 2.0;
 const MAX_PUNCHES = 2;
 
+let lastCollisionCheck = 0;
+const COLLISION_CHECK_INTERVAL = 100; // Check every 100ms
+
 // Physics world
 const world = new CANNON.World({
 	gravity: new CANNON.Vec3(0, -9.82, 0),
+	solver: new CANNON.GSSolver(),
+	iterations: 3,
+	tolerance: 0.001,
 });
+
+// Set up broadphase after world is initialized
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = true;
+world.defaultContactMaterial.friction = 0.3;
+world.defaultContactMaterial.restitution = 0.3;
 
 // Add physics bodies for hands
 const rightHandBody = new CANNON.Body({
@@ -759,8 +771,8 @@ function onFrame(
 	time,
 	{ scene, camera, renderer, player, controllers },
 ) {
-	// Update physics world
-	world.step(1 / 60);
+	// Update physics world with fixed time step
+	world.step(1 / 90); // Increased physics update rate for smoother VR
 
 	// Update character animation
 	if (characterMixer) {
@@ -826,7 +838,6 @@ function onFrame(
 		// Switch animations based on distance
 		if (distance <= PUNCH_DISTANCE) {
 			if (walkAction && walkAction.isRunning()) {
-				console.log('Switching to punch animation');
 				walkAction.stop();
 				if (punchAction) {
 					punchAction.enabled = true;
@@ -836,7 +847,6 @@ function onFrame(
 			}
 		} else {
 			if (punchAction && punchAction.isRunning()) {
-				console.log('Switching to walk animation');
 				punchAction.stop();
 				if (walkAction) {
 					walkAction.enabled = true;
@@ -844,53 +854,14 @@ function onFrame(
 				}
 			}
 		}
-
-		// Check for collision between hands and player
-		if (rightHandGroup && leftHandGroup) {
-			const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
-			const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
-			const playerBox = new THREE.Box3().setFromObject(player);
-
-			if (
-				rightHandBox.intersectsBox(playerBox) ||
-				leftHandBox.intersectsBox(playerBox)
-			) {
-				// Get the player's current position
-				const playerPos = new CANNON.Vec3(
-					player.position.x,
-					player.position.y,
-					player.position.z,
-				);
-
-				// Create a new ragdoll at the player's position
-				const newRagdoll = createRagdoll(1, playerPos);
-				scene.add(newRagdoll.group);
-
-				// Apply some random forces to make it look more dynamic
-				newRagdoll.bodies.forEach((body) => {
-					const force = new CANNON.Vec3(
-						(Math.random() - 0.5) * 100,
-						Math.random() * 100,
-						(Math.random() - 0.5) * 100,
-					);
-					body.applyForce(force, body.position);
-				});
-			}
-		}
-	}
-
-	// Update hand physics bodies
-	if (rightHandGroup) {
-		rightHandBody.position.copy(rightHandGroup.position);
-		rightHandBody.quaternion.copy(rightHandGroup.quaternion);
-	}
-	if (leftHandGroup) {
-		leftHandBody.position.copy(leftHandGroup.position);
-		leftHandBody.quaternion.copy(leftHandGroup.quaternion);
 	}
 
 	// Check for collision between hands and character
-	if (walkingCharacter) {
+	if (
+		walkingCharacter &&
+		time - lastCollisionCheck >= COLLISION_CHECK_INTERVAL
+	) {
+		lastCollisionCheck = time;
 		const characterBox = new THREE.Box3().setFromObject(walkingCharacter);
 		const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
 		const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
@@ -947,6 +918,16 @@ function onFrame(
 				);
 			});
 		}
+	}
+
+	// Update hand physics bodies
+	if (rightHandGroup) {
+		rightHandBody.position.copy(rightHandGroup.position);
+		rightHandBody.quaternion.copy(rightHandGroup.quaternion);
+	}
+	if (leftHandGroup) {
+		leftHandBody.position.copy(leftHandGroup.position);
+		leftHandBody.quaternion.copy(leftHandGroup.quaternion);
 	}
 
 	// Handle right controller
