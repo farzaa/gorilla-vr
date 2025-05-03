@@ -46,7 +46,9 @@ let characterMixer = null;
 let walkingCharacter = null;
 let walkAction = null;
 let punchAction = null;
-const PUNCH_DISTANCE = 2.0; // Distance at which to switch to punching
+let punchCount = 0;
+const PUNCH_DISTANCE = 2.0;
+const MAX_PUNCHES = 2;
 
 // Physics world
 const world = new CANNON.World({
@@ -488,9 +490,26 @@ const groundBody = new CANNON.Body({
 	material: groundMaterial,
 });
 groundBody.addShape(groundShape);
-groundBody.position.set(0, -1, 0);
+groundBody.position.set(0, 0, 0);
 groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
 world.addBody(groundBody);
+
+// Add collision detection between ragdoll and ground
+world.addEventListener('beginContact', (event) => {
+	const bodyA = event.bodyA;
+	const bodyB = event.bodyB;
+
+	// Check if either body is the ground
+	if (bodyA === groundBody || bodyB === groundBody) {
+		const otherBody = bodyA === groundBody ? bodyB : bodyA;
+
+		// If the other body is part of the ragdoll, apply some damping to prevent bouncing
+		if (otherBody.mass > 0) {
+			otherBody.linearDamping = 0.3;
+			otherBody.angularDamping = 0.3;
+		}
+	}
+});
 
 function updateScoreDisplay() {
 	const clampedScore = Math.max(0, Math.min(9999, score));
@@ -531,12 +550,85 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 			) {
 				// Set up walking animation
 				walkAction = characterMixer.clipAction(walkingFbx.animations[0]);
+				walkAction.loop = THREE.LoopRepeat;
 				walkAction.play();
 
 				// Set up punching animation
 				punchAction = characterMixer.clipAction(punchingFbx.animations[0]);
-				punchAction.loop = THREE.LoopRepeat;
+				punchAction.loop = THREE.LoopOnce;
 				punchAction.enabled = false;
+				punchAction.clampWhenFinished = true;
+
+				// Add mixer event listener for when punch animation completes
+				characterMixer.addEventListener('finished', (e) => {
+					if (e.action === punchAction) {
+						console.log('Punch animation finished event triggered');
+						punchCount++;
+						console.log('Punch completed, count:', punchCount);
+
+						if (punchCount >= MAX_PUNCHES) {
+							console.log('Creating ragdoll...');
+							// Get the character's current position
+							const charPosition = new CANNON.Vec3(
+								walkingCharacter.position.x,
+								walkingCharacter.position.y,
+								walkingCharacter.position.z,
+							);
+
+							// Create a new ragdoll at the character's position with 50% larger scale
+							const newRagdoll = createRagdoll(1.75, charPosition);
+							scene.add(newRagdoll.group);
+
+							// Configure ragdoll physics
+							newRagdoll.bodies.forEach((body) => {
+								// Set proper mass and damping
+								body.mass = 5; // Increase mass for better physics response
+								body.linearDamping = 0.1; // Reduce linear damping
+								body.angularDamping = 0.1; // Reduce angular damping
+
+								// Set material properties
+								body.material = new CANNON.Material({
+									friction: 0.3,
+									restitution: 0.3,
+								});
+
+								// Add to world
+								world.addBody(body);
+							});
+
+							// Add constraints to world
+							newRagdoll.constraints.forEach((constraint) => {
+								world.addConstraint(constraint);
+							});
+
+							// Remove the character model from the scene
+							scene.add(newRagdoll.group);
+							scene.remove(walkingCharacter);
+							walkingCharacter = null;
+
+							// Apply stronger random forces to make it look more dynamic
+							newRagdoll.bodies.forEach((body) => {
+								const force = new CANNON.Vec3(
+									(Math.random() - 0.5) * 500, // Increased force
+									Math.random() * 500, // Increased force
+									(Math.random() - 0.5) * 500, // Increased force
+								);
+								body.applyForce(force, body.position);
+
+								// Add some angular velocity for more dynamic movement
+								body.angularVelocity.set(
+									(Math.random() - 0.5) * 5,
+									(Math.random() - 0.5) * 5,
+									(Math.random() - 0.5) * 5,
+								);
+							});
+						} else {
+							// Switch back to walking after punch completes
+							walkAction.enabled = true;
+							walkAction.play();
+						}
+					}
+				});
 			}
 		});
 	});
@@ -637,11 +729,48 @@ function onFrame(
 	{ scene, camera, renderer, player, controllers },
 ) {
 	// Update physics world
-	world.step(delta);
+	world.step(1 / 60);
 
-	// Update animation mixer if it exists
+	// Update character animation
 	if (characterMixer) {
 		characterMixer.update(delta);
+	}
+
+	// Update ragdoll meshes to match physics bodies
+	if (walkingCharacter === null) {
+		// Find the ragdoll group in the scene
+		const ragdollGroup = scene.children.find(
+			(child) =>
+				child instanceof THREE.Group &&
+				child.children.length > 0 &&
+				child.children.some(
+					(mesh) =>
+						mesh instanceof THREE.Mesh &&
+						mesh.material &&
+						mesh.material.color &&
+						mesh.material.color.getHex() === 0xff0000,
+				),
+		);
+
+		if (ragdollGroup) {
+			// Get the ragdoll bodies from the world
+			const ragdollBodies = world.bodies.filter(
+				(body) =>
+					body.mass > 0 &&
+					body.shapes.some(
+						(shape) =>
+							shape instanceof CANNON.Box || shape instanceof CANNON.Sphere,
+					),
+			);
+
+			// Update each mesh to match its corresponding physics body
+			ragdollGroup.children.forEach((mesh, index) => {
+				if (mesh instanceof THREE.Mesh && ragdollBodies[index]) {
+					mesh.position.copy(ragdollBodies[index].position);
+					mesh.quaternion.copy(ragdollBodies[index].quaternion);
+				}
+			});
+		}
 	}
 
 	// Move character towards player
@@ -666,14 +795,17 @@ function onFrame(
 		// Switch animations based on distance
 		if (distance <= PUNCH_DISTANCE) {
 			if (walkAction && walkAction.isRunning()) {
+				console.log('Switching to punch animation');
 				walkAction.stop();
 				if (punchAction) {
 					punchAction.enabled = true;
+					punchAction.reset();
 					punchAction.play();
 				}
 			}
 		} else {
 			if (punchAction && punchAction.isRunning()) {
+				console.log('Switching to walk animation');
 				punchAction.stop();
 				if (walkAction) {
 					walkAction.enabled = true;
