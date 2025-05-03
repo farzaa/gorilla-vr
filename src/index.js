@@ -54,6 +54,8 @@ const MAX_PUNCHES = 2;
 const characters = [];
 const ragdolls = [];
 const NUM_CHARACTERS = 10;
+const MIN_SPAWN_DISTANCE = 20; // Minimum distance from player
+const MAX_SPAWN_DISTANCE = 120; // Maximum distance from player
 
 let lastCollisionCheck = 0;
 const COLLISION_CHECK_INTERVAL = 100; // Check every 100ms
@@ -566,6 +568,35 @@ function updateScoreDisplay() {
 	scoreText.sync();
 }
 
+// Function to generate a random spawn position
+function getRandomSpawnPosition() {
+	let position;
+	let attempts = 0;
+	const maxAttempts = 100;
+
+	do {
+		// Generate random angle and distance
+		const angle = Math.random() * Math.PI * 2;
+		const distance =
+			MIN_SPAWN_DISTANCE +
+			Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
+
+		// Calculate position
+		position = new THREE.Vector3(
+			Math.cos(angle) * distance,
+			0,
+			Math.sin(angle) * distance,
+		);
+
+		attempts++;
+
+		// If we've tried too many times, just use the last position
+		if (attempts >= maxAttempts) break;
+	} while (position.length() < MIN_SPAWN_DISTANCE); // Ensure minimum distance from origin
+
+	return position;
+}
+
 function setupScene({ scene, camera, renderer, player, controllers }) {
 	scene.background = new THREE.Color(0x87ceeb);
 	const gltfLoader = new GLTFLoader();
@@ -584,14 +615,11 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	for (let i = 0; i < NUM_CHARACTERS; i++) {
 		fbxLoader.load('assets/Walking.fbx', (walkingFbx) => {
 			walkingFbx.scale.setScalar(0.015);
-			// Position characters in a circle around the player
-			const angle = (i / NUM_CHARACTERS) * Math.PI * 2;
-			const radius = 15;
-			walkingFbx.position.set(
-				Math.cos(angle) * radius,
-				0,
-				Math.sin(angle) * radius,
-			);
+
+			// Get random spawn position
+			const spawnPosition = getRandomSpawnPosition();
+			walkingFbx.position.copy(spawnPosition);
+
 			scene.add(walkingFbx);
 
 			const character = {
