@@ -55,6 +55,37 @@ const world = new CANNON.World({
 	gravity: new CANNON.Vec3(0, -9.82, 0),
 });
 
+// Add physics bodies for hands
+const rightHandBody = new CANNON.Body({
+	mass: 1,
+	shape: new CANNON.Box(new CANNON.Vec3(0.1, 0.1, 0.1)),
+	material: new CANNON.Material({ friction: 0.5, restitution: 0.3 }),
+});
+
+const leftHandBody = new CANNON.Body({
+	mass: 1,
+	shape: new CANNON.Box(new CANNON.Vec3(0.1, 0.1, 0.1)),
+	material: new CANNON.Material({ friction: 0.5, restitution: 0.3 }),
+});
+
+world.addBody(rightHandBody);
+world.addBody(leftHandBody);
+
+// Add contact material for hand-character interaction
+const handMaterial = new CANNON.Material();
+const characterMaterial = new CANNON.Material();
+const handCharacterContact = new CANNON.ContactMaterial(
+	handMaterial,
+	characterMaterial,
+	{
+		friction: 0.5,
+		restitution: 0.3,
+		contactEquationStiffness: 1e6,
+		contactEquationRelaxation: 3,
+	},
+);
+world.addContactMaterial(handCharacterContact);
+
 // Ragdoll setup
 const createRagdoll = (
 	scale = 10,
@@ -845,6 +876,76 @@ function onFrame(
 					body.applyForce(force, body.position);
 				});
 			}
+		}
+	}
+
+	// Update hand physics bodies
+	if (rightHandGroup) {
+		rightHandBody.position.copy(rightHandGroup.position);
+		rightHandBody.quaternion.copy(rightHandGroup.quaternion);
+	}
+	if (leftHandGroup) {
+		leftHandBody.position.copy(leftHandGroup.position);
+		leftHandBody.quaternion.copy(leftHandGroup.quaternion);
+	}
+
+	// Check for collision between hands and character
+	if (walkingCharacter) {
+		const characterBox = new THREE.Box3().setFromObject(walkingCharacter);
+		const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
+		const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
+
+		if (
+			rightHandBox.intersectsBox(characterBox) ||
+			leftHandBox.intersectsBox(characterBox)
+		) {
+			// Get the character's current position
+			const charPosition = new CANNON.Vec3(
+				walkingCharacter.position.x,
+				walkingCharacter.position.y,
+				walkingCharacter.position.z,
+			);
+
+			// Create a new ragdoll at the character's position
+			const newRagdoll = createRagdoll(1.75, charPosition);
+			scene.add(newRagdoll.group);
+
+			// Configure ragdoll physics
+			newRagdoll.bodies.forEach((body) => {
+				body.mass = 5;
+				body.linearDamping = 0.1;
+				body.angularDamping = 0.1;
+				body.material = new CANNON.Material({
+					friction: 0.3,
+					restitution: 0.3,
+				});
+				world.addBody(body);
+			});
+
+			// Add constraints to world
+			newRagdoll.constraints.forEach((constraint) => {
+				world.addConstraint(constraint);
+			});
+
+			// Remove the character model from the scene
+			scene.remove(walkingCharacter);
+			walkingCharacter = null;
+
+			// Apply forces to make it look more dynamic
+			newRagdoll.bodies.forEach((body) => {
+				const force = new CANNON.Vec3(
+					(Math.random() - 0.5) * 500,
+					Math.random() * 500,
+					(Math.random() - 0.5) * 500,
+				);
+				body.applyForce(force, body.position);
+
+				body.angularVelocity.set(
+					(Math.random() - 0.5) * 5,
+					(Math.random() - 0.5) * 5,
+					(Math.random() - 0.5) * 5,
+				);
+			});
 		}
 	}
 
