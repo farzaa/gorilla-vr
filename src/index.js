@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
@@ -46,6 +47,450 @@ let walkingCharacter = null;
 let walkAction = null;
 let punchAction = null;
 const PUNCH_DISTANCE = 2.0; // Distance at which to switch to punching
+
+// Physics world
+const world = new CANNON.World({
+	gravity: new CANNON.Vec3(0, -9.82, 0),
+});
+
+// Ragdoll setup
+const createRagdoll = (
+	scale = 10,
+	position = new CANNON.Vec3(0, 0, 10),
+	angleA = Math.PI / 4,
+	angleB = Math.PI / 3,
+	twistAngle = Math.PI / 8,
+) => {
+	const bodies = [];
+	const constraints = [];
+	const group = new THREE.Group();
+
+	const shouldersDistance = 0.5 * scale;
+	const upperArmLength = 0.4 * scale;
+	const lowerArmLength = 0.4 * scale;
+	const upperArmSize = 0.2 * scale;
+	const lowerArmSize = 0.2 * scale;
+	const neckLength = 0.1 * scale;
+	const headRadius = 0.25 * scale;
+	const upperBodyLength = 0.6 * scale;
+	const pelvisLength = 0.4 * scale;
+	const upperLegLength = 0.5 * scale;
+	const upperLegSize = 0.2 * scale;
+	const lowerLegSize = 0.2 * scale;
+	const lowerLegLength = 0.5 * scale;
+
+	// Lower legs
+	const lowerLeftLeg = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(-shouldersDistance / 2, lowerLegLength / 2, 0),
+	});
+	const lowerRightLeg = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(shouldersDistance / 2, lowerLegLength / 2, 0),
+	});
+	lowerLeftLeg.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				lowerLegSize * 0.5,
+				lowerLegLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	lowerRightLeg.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				lowerLegSize * 0.5,
+				lowerLegLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(lowerLeftLeg);
+	world.addBody(lowerRightLeg);
+	bodies.push(lowerLeftLeg, lowerRightLeg);
+
+	// Upper legs
+	const upperLeftLeg = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			-shouldersDistance / 2,
+			lowerLeftLeg.position.y + lowerLegLength / 2 + upperLegLength / 2,
+			0,
+		),
+	});
+	const upperRightLeg = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			shouldersDistance / 2,
+			lowerRightLeg.position.y + lowerLegLength / 2 + upperLegLength / 2,
+			0,
+		),
+	});
+	upperLeftLeg.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				upperLegSize * 0.5,
+				upperLegLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	upperRightLeg.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				upperLegSize * 0.5,
+				upperLegLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(upperLeftLeg);
+	world.addBody(upperRightLeg);
+	bodies.push(upperLeftLeg, upperRightLeg);
+
+	// Pelvis
+	const pelvis = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			0,
+			upperLeftLeg.position.y + upperLegLength / 2 + pelvisLength / 2,
+			0,
+		),
+	});
+	pelvis.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				shouldersDistance * 0.5,
+				pelvisLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(pelvis);
+	bodies.push(pelvis);
+
+	// Upper body
+	const upperBody = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			0,
+			pelvis.position.y + pelvisLength / 2 + upperBodyLength / 2,
+			0,
+		),
+	});
+	upperBody.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				shouldersDistance * 0.5,
+				upperBodyLength * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(upperBody);
+	bodies.push(upperBody);
+
+	// Head
+	const head = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			0,
+			upperBody.position.y + upperBodyLength / 2 + headRadius + neckLength,
+			0,
+		),
+	});
+	head.addShape(new CANNON.Sphere(headRadius));
+	world.addBody(head);
+	bodies.push(head);
+
+	// Upper arms
+	const upperLeftArm = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			-shouldersDistance / 2 - upperArmLength / 2,
+			upperBody.position.y + upperBodyLength / 2,
+			0,
+		),
+	});
+	const upperRightArm = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			shouldersDistance / 2 + upperArmLength / 2,
+			upperBody.position.y + upperBodyLength / 2,
+			0,
+		),
+	});
+	upperLeftArm.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				upperArmLength * 0.5,
+				upperArmSize * 0.5,
+				upperArmSize * 0.5,
+			),
+		),
+	);
+	upperRightArm.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				upperArmLength * 0.5,
+				upperArmSize * 0.5,
+				upperArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(upperLeftArm);
+	world.addBody(upperRightArm);
+	bodies.push(upperLeftArm, upperRightArm);
+
+	// Lower arms
+	const lowerLeftArm = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			upperLeftArm.position.x - lowerArmLength / 2 - upperArmLength / 2,
+			upperLeftArm.position.y,
+			0,
+		),
+	});
+	const lowerRightArm = new CANNON.Body({
+		mass: 1,
+		position: new CANNON.Vec3(
+			upperRightArm.position.x + lowerArmLength / 2 + upperArmLength / 2,
+			upperRightArm.position.y,
+			0,
+		),
+	});
+	lowerLeftArm.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				lowerArmLength * 0.5,
+				lowerArmSize * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	lowerRightArm.addShape(
+		new CANNON.Box(
+			new CANNON.Vec3(
+				lowerArmLength * 0.5,
+				lowerArmSize * 0.5,
+				lowerArmSize * 0.5,
+			),
+		),
+	);
+	world.addBody(lowerLeftArm);
+	world.addBody(lowerRightArm);
+	bodies.push(lowerLeftArm, lowerRightArm);
+
+	// Create visual meshes
+	bodies.forEach((body, index) => {
+		const shape = body.shapes[0];
+		let mesh;
+		let color;
+
+		// Set color based on body part
+		if (index === 6) {
+			// Head
+			color = 0xff0000; // Red
+		} else if (index === 5) {
+			// Upper body
+			color = 0xff0000; // Red
+		} else if (index === 4) {
+			// Pelvis
+			color = 0x000000; // Black
+		} else if (index === 2 || index === 3) {
+			// Upper legs
+			color = 0x000000; // Black
+		} else {
+			// Lower legs and arms
+			color = 0xffcca8; // Skin color
+		}
+
+		if (shape instanceof CANNON.Sphere) {
+			mesh = new THREE.Mesh(
+				new THREE.SphereGeometry(shape.radius),
+				new THREE.MeshStandardMaterial({
+					color: color,
+					roughness: 0.7,
+					metalness: 0.3,
+				}),
+			);
+		} else if (shape instanceof CANNON.Box) {
+			mesh = new THREE.Mesh(
+				new THREE.BoxGeometry(
+					shape.halfExtents.x * 2,
+					shape.halfExtents.y * 2,
+					shape.halfExtents.z * 2,
+				),
+				new THREE.MeshStandardMaterial({
+					color: color,
+					roughness: 0.7,
+					metalness: 0.3,
+				}),
+			);
+		}
+
+		if (mesh) {
+			mesh.castShadow = true;
+			mesh.receiveShadow = true;
+			group.add(mesh);
+		}
+	});
+
+	// Neck joint
+	const neckJoint = new CANNON.ConeTwistConstraint(head, upperBody, {
+		pivotA: new CANNON.Vec3(0, -headRadius - neckLength / 2, 0),
+		pivotB: new CANNON.Vec3(0, upperBodyLength / 2, 0),
+		axisA: CANNON.Vec3.UNIT_Y,
+		axisB: CANNON.Vec3.UNIT_Y,
+		angle: angleA,
+		twistAngle: twistAngle,
+	});
+	world.addConstraint(neckJoint);
+	constraints.push(neckJoint);
+
+	// Knee joints
+	const leftKneeJoint = new CANNON.ConeTwistConstraint(
+		lowerLeftLeg,
+		upperLeftLeg,
+		{
+			pivotA: new CANNON.Vec3(0, lowerLegLength / 2, 0),
+			pivotB: new CANNON.Vec3(0, -upperLegLength / 2, 0),
+			axisA: CANNON.Vec3.UNIT_Y,
+			axisB: CANNON.Vec3.UNIT_Y,
+			angle: angleA,
+			twistAngle: twistAngle,
+		},
+	);
+	const rightKneeJoint = new CANNON.ConeTwistConstraint(
+		lowerRightLeg,
+		upperRightLeg,
+		{
+			pivotA: new CANNON.Vec3(0, lowerLegLength / 2, 0),
+			pivotB: new CANNON.Vec3(0, -upperLegLength / 2, 0),
+			axisA: CANNON.Vec3.UNIT_Y,
+			axisB: CANNON.Vec3.UNIT_Y,
+			angle: angleA,
+			twistAngle: twistAngle,
+		},
+	);
+	world.addConstraint(leftKneeJoint);
+	world.addConstraint(rightKneeJoint);
+	constraints.push(leftKneeJoint, rightKneeJoint);
+
+	// Hip joints
+	const leftHipJoint = new CANNON.ConeTwistConstraint(upperLeftLeg, pelvis, {
+		pivotA: new CANNON.Vec3(0, upperLegLength / 2, 0),
+		pivotB: new CANNON.Vec3(-shouldersDistance / 2, -pelvisLength / 2, 0),
+		axisA: CANNON.Vec3.UNIT_Y,
+		axisB: CANNON.Vec3.UNIT_Y,
+		angle: angleA,
+		twistAngle: twistAngle,
+	});
+	const rightHipJoint = new CANNON.ConeTwistConstraint(upperRightLeg, pelvis, {
+		pivotA: new CANNON.Vec3(0, upperLegLength / 2, 0),
+		pivotB: new CANNON.Vec3(shouldersDistance / 2, -pelvisLength / 2, 0),
+		axisA: CANNON.Vec3.UNIT_Y,
+		axisB: CANNON.Vec3.UNIT_Y,
+		angle: angleA,
+		twistAngle: twistAngle,
+	});
+	world.addConstraint(leftHipJoint);
+	world.addConstraint(rightHipJoint);
+	constraints.push(leftHipJoint, rightHipJoint);
+
+	// Spine
+	const spineJoint = new CANNON.ConeTwistConstraint(pelvis, upperBody, {
+		pivotA: new CANNON.Vec3(0, pelvisLength / 2, 0),
+		pivotB: new CANNON.Vec3(0, -upperBodyLength / 2, 0),
+		axisA: CANNON.Vec3.UNIT_Y,
+		axisB: CANNON.Vec3.UNIT_Y,
+		angle: angleA,
+		twistAngle: twistAngle,
+	});
+	world.addConstraint(spineJoint);
+	constraints.push(spineJoint);
+
+	// Shoulders
+	const leftShoulder = new CANNON.ConeTwistConstraint(upperBody, upperLeftArm, {
+		pivotA: new CANNON.Vec3(-shouldersDistance / 2, upperBodyLength / 2, 0),
+		pivotB: new CANNON.Vec3(upperArmLength / 2, 0, 0),
+		axisA: CANNON.Vec3.UNIT_X,
+		axisB: CANNON.Vec3.UNIT_X,
+		angle: angleB,
+	});
+	const rightShoulder = new CANNON.ConeTwistConstraint(
+		upperBody,
+		upperRightArm,
+		{
+			pivotA: new CANNON.Vec3(shouldersDistance / 2, upperBodyLength / 2, 0),
+			pivotB: new CANNON.Vec3(-upperArmLength / 2, 0, 0),
+			axisA: CANNON.Vec3.UNIT_X,
+			axisB: CANNON.Vec3.UNIT_X,
+			angle: angleB,
+			twistAngle: twistAngle,
+		},
+	);
+	world.addConstraint(leftShoulder);
+	world.addConstraint(rightShoulder);
+	constraints.push(leftShoulder, rightShoulder);
+
+	// Elbow joints
+	const leftElbowJoint = new CANNON.ConeTwistConstraint(
+		lowerLeftArm,
+		upperLeftArm,
+		{
+			pivotA: new CANNON.Vec3(lowerArmLength / 2, 0, 0),
+			pivotB: new CANNON.Vec3(-upperArmLength / 2, 0, 0),
+			axisA: CANNON.Vec3.UNIT_X,
+			axisB: CANNON.Vec3.UNIT_X,
+			angle: angleA,
+			twistAngle: twistAngle,
+		},
+	);
+	const rightElbowJoint = new CANNON.ConeTwistConstraint(
+		lowerRightArm,
+		upperRightArm,
+		{
+			pivotA: new CANNON.Vec3(-lowerArmLength / 2, 0, 0),
+			pivotB: new CANNON.Vec3(upperArmLength / 2, 0, 0),
+			axisA: CANNON.Vec3.UNIT_X,
+			axisB: CANNON.Vec3.UNIT_X,
+			angle: angleA,
+			twistAngle: twistAngle,
+		},
+	);
+	world.addConstraint(leftElbowJoint);
+	world.addConstraint(rightElbowJoint);
+	constraints.push(leftElbowJoint, rightElbowJoint);
+
+	// Move all body parts to final position
+	bodies.forEach((body) => {
+		body.position.set(
+			position.x + body.position.x,
+			position.y + body.position.y,
+			position.z + body.position.z,
+		);
+	});
+
+	return {
+		bodies,
+		constraints,
+		group,
+	};
+};
+
+// Create ground
+const groundShape = new CANNON.Plane();
+const groundMaterial = new CANNON.Material({ friction: 0.5, restitution: 0.1 });
+const groundBody = new CANNON.Body({
+	mass: 0,
+	material: groundMaterial,
+});
+groundBody.addShape(groundShape);
+groundBody.position.set(0, -1, 0);
+groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+world.addBody(groundBody);
 
 function updateScoreDisplay() {
 	const clampedScore = Math.max(0, Math.min(9999, score));
@@ -191,6 +636,9 @@ function onFrame(
 	time,
 	{ scene, camera, renderer, player, controllers },
 ) {
+	// Update physics world
+	world.step(delta);
+
 	// Update animation mixer if it exists
 	if (characterMixer) {
 		characterMixer.update(delta);
@@ -207,6 +655,13 @@ function onFrame(
 
 		// Calculate distance to player
 		const distance = walkingCharacter.position.distanceTo(playerPosition);
+
+		// Move character towards player if not too close
+		if (distance > PUNCH_DISTANCE) {
+			const moveSpeed = 0.03;
+			walkingCharacter.position.add(direction.multiplyScalar(moveSpeed));
+			walkingCharacter.lookAt(playerPosition);
+		}
 
 		// Switch animations based on distance
 		if (distance <= PUNCH_DISTANCE) {
@@ -225,14 +680,39 @@ function onFrame(
 					walkAction.play();
 				}
 			}
-			// Move character forward only if not punching
-			const moveSpeed = 2.0 * delta;
-			walkingCharacter.position.add(direction.multiplyScalar(moveSpeed));
 		}
 
-		// Make character face the direction it's moving
-		if (direction.length() > 0) {
-			walkingCharacter.lookAt(playerPosition);
+		// Check for collision between hands and player
+		if (rightHandGroup && leftHandGroup) {
+			const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
+			const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
+			const playerBox = new THREE.Box3().setFromObject(player);
+
+			if (
+				rightHandBox.intersectsBox(playerBox) ||
+				leftHandBox.intersectsBox(playerBox)
+			) {
+				// Get the player's current position
+				const playerPos = new CANNON.Vec3(
+					player.position.x,
+					player.position.y,
+					player.position.z,
+				);
+
+				// Create a new ragdoll at the player's position
+				const newRagdoll = createRagdoll(1, playerPos);
+				scene.add(newRagdoll.group);
+
+				// Apply some random forces to make it look more dynamic
+				newRagdoll.bodies.forEach((body) => {
+					const force = new CANNON.Vec3(
+						(Math.random() - 0.5) * 100,
+						Math.random() * 100,
+						(Math.random() - 0.5) * 100,
+					);
+					body.applyForce(force, body.position);
+				});
+			}
 		}
 	}
 
