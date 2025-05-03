@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
@@ -40,6 +41,11 @@ let leftHandFistMesh = null;
 let leftHandIsFist = false;
 
 let soundtrack = null;
+let characterMixer = null;
+let walkingCharacter = null;
+let walkAction = null;
+let punchAction = null;
+const PUNCH_DISTANCE = 2.0; // Distance at which to switch to punching
 
 function updateScoreDisplay() {
 	const clampedScore = Math.max(0, Math.min(9999, score));
@@ -49,8 +55,46 @@ function updateScoreDisplay() {
 }
 
 function setupScene({ scene, camera, renderer, player, controllers }) {
-	scene.background = new THREE.Color(0x87CEEB);
+	scene.background = new THREE.Color(0x87ceeb);
 	const gltfLoader = new GLTFLoader();
+	const fbxLoader = new FBXLoader();
+
+	// Add lighting
+	const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+	scene.add(ambientLight);
+
+	const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+	directionalLight.position.set(5, 5, 5);
+	directionalLight.castShadow = true;
+	scene.add(directionalLight);
+
+	// Load the walking character
+	fbxLoader.load('assets/Walking.fbx', (walkingFbx) => {
+		walkingFbx.scale.setScalar(0.015);
+		walkingFbx.position.set(0, 0, -15);
+		scene.add(walkingFbx);
+		walkingCharacter = walkingFbx;
+
+		// Set up animation mixer
+		characterMixer = new THREE.AnimationMixer(walkingFbx);
+
+		// Load punching animation
+		fbxLoader.load('assets/Punching.fbx', (punchingFbx) => {
+			if (
+				walkingFbx.animations.length > 0 &&
+				punchingFbx.animations.length > 0
+			) {
+				// Set up walking animation
+				walkAction = characterMixer.clipAction(walkingFbx.animations[0]);
+				walkAction.play();
+
+				// Set up punching animation
+				punchAction = characterMixer.clipAction(punchingFbx.animations[0]);
+				punchAction.loop = THREE.LoopRepeat;
+				punchAction.enabled = false;
+			}
+		});
+	});
 
 	gltfLoader.load('assets/football_court.glb', (gltf) => {
 		gltf.scene.position.y = 0;
@@ -113,7 +157,7 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	camera.add(listener);
 
 	const audioLoader = new THREE.AudioLoader();
-	
+
 	// Right controller laser sound
 	laserSound = new THREE.PositionalAudio(listener);
 	audioLoader.load('assets/laser.ogg', (buffer) => {
@@ -147,6 +191,51 @@ function onFrame(
 	time,
 	{ scene, camera, renderer, player, controllers },
 ) {
+	// Update animation mixer if it exists
+	if (characterMixer) {
+		characterMixer.update(delta);
+	}
+
+	// Move character towards player
+	if (walkingCharacter) {
+		const playerPosition = new THREE.Vector3();
+		player.getWorldPosition(playerPosition);
+
+		// Calculate direction to player
+		const direction = new THREE.Vector3();
+		direction.subVectors(playerPosition, walkingCharacter.position).normalize();
+
+		// Calculate distance to player
+		const distance = walkingCharacter.position.distanceTo(playerPosition);
+
+		// Switch animations based on distance
+		if (distance <= PUNCH_DISTANCE) {
+			if (walkAction && walkAction.isRunning()) {
+				walkAction.stop();
+				if (punchAction) {
+					punchAction.enabled = true;
+					punchAction.play();
+				}
+			}
+		} else {
+			if (punchAction && punchAction.isRunning()) {
+				punchAction.stop();
+				if (walkAction) {
+					walkAction.enabled = true;
+					walkAction.play();
+				}
+			}
+			// Move character forward only if not punching
+			const moveSpeed = 2.0 * delta;
+			walkingCharacter.position.add(direction.multiplyScalar(moveSpeed));
+		}
+
+		// Make character face the direction it's moving
+		if (direction.length() > 0) {
+			walkingCharacter.lookAt(playerPosition);
+		}
+	}
+
 	// Handle right controller
 	if (controllers.right) {
 		const { gamepad, raySpace, mesh } = controllers.right;
