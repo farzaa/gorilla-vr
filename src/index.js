@@ -25,15 +25,103 @@ const leftHandGroup = new THREE.Group();
 const targets = [];
 
 let score = 0;
+let gorillasHealth = 200;
+const MAX_HEALTH = 200;
+
+// Create UI container that will follow the camera
+const uiContainer = new THREE.Group();
+
 const scoreText = new Text();
 scoreText.fontSize = 0.52;
 scoreText.font = 'assets/SpaceMono-Bold.ttf';
-scoreText.position.z = -2;
 scoreText.color = 0xffa276;
 scoreText.anchorX = 'center';
 scoreText.anchorY = 'middle';
 
-let laserSound, leftLaserSound, scoreSound;
+// Create health bar container
+const healthBarWidth = 0.8;
+const healthBarHeight = 0.1;
+const healthBarGeometry = new THREE.BoxGeometry(healthBarWidth, healthBarHeight, 0.01);
+const healthBarMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
+const healthBarContainer = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
+
+// Create the actual health bar that will decrease
+const healthBarFillGeometry = new THREE.BoxGeometry(healthBarWidth, healthBarHeight, 0.015);
+const healthBarFillMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+const healthBarFill = new THREE.Mesh(healthBarFillGeometry, healthBarFillMaterial);
+
+// Add UI elements to the container
+uiContainer.add(scoreText);
+uiContainer.add(healthBarContainer);
+uiContainer.add(healthBarFill);
+
+// Position UI elements relative to container
+scoreText.position.set(0, -0.7, -1.44);
+scoreText.rotateX(-Math.PI / 6);
+
+healthBarContainer.position.set(0, -0.55, -1.44);
+healthBarContainer.rotation.x = -Math.PI / 6;
+
+healthBarFill.position.copy(healthBarContainer.position);
+healthBarFill.rotation.copy(healthBarContainer.rotation);
+
+// Create game over panel
+const gameOverPanel = new THREE.Group();
+gameOverPanel.visible = false;
+
+// Game over background panel
+const panelGeometry = new THREE.PlaneGeometry(2, 1.5);
+const panelMaterial = new THREE.MeshBasicMaterial({ 
+	color: 0x000000,
+	transparent: true,
+	opacity: 0.8
+});
+const panel = new THREE.Mesh(panelGeometry, panelMaterial);
+gameOverPanel.add(panel);
+
+// Game over text
+const gameOverText = new Text();
+gameOverText.text = 'GAME OVER';
+gameOverText.fontSize = 0.2;
+gameOverText.font = 'assets/SpaceMono-Bold.ttf';
+gameOverText.color = 0xff0000;
+gameOverText.position.set(0, 0.2, 0.01);
+gameOverText.anchorX = 'center';
+gameOverText.anchorY = 'middle';
+gameOverPanel.add(gameOverText);
+
+// Final score text
+const finalScoreText = new Text();
+finalScoreText.fontSize = 0.15;
+finalScoreText.font = 'assets/SpaceMono-Bold.ttf';
+finalScoreText.color = 0xffffff;
+finalScoreText.position.set(0, 0, 0.01);
+finalScoreText.anchorX = 'center';
+finalScoreText.anchorY = 'middle';
+gameOverPanel.add(finalScoreText);
+
+// Play again button
+const buttonGeometry = new THREE.PlaneGeometry(1, 0.3);
+const buttonMaterial = new THREE.MeshBasicMaterial({ 
+	color: 0x00ff00,
+	transparent: true,
+	opacity: 0.9
+});
+const playAgainButton = new THREE.Mesh(buttonGeometry, buttonMaterial);
+playAgainButton.position.set(0, -0.3, 0.01);
+gameOverPanel.add(playAgainButton);
+
+const playAgainText = new Text();
+playAgainText.text = 'PLAY AGAIN';
+playAgainText.fontSize = 0.15;
+playAgainText.font = 'assets/SpaceMono-Bold.ttf';
+playAgainText.color = 0x000000;
+playAgainText.position.set(0, -0.3, 0.02);
+playAgainText.anchorX = 'center';
+playAgainText.anchorY = 'middle';
+gameOverPanel.add(playAgainText);
+
+let laserSound, leftLaserSound, scoreSound, punchSound;
 let rightHandOpenMesh = null;
 let rightHandFistMesh = null;
 let rightHandIsFist = false;
@@ -53,16 +141,16 @@ const MAX_PUNCHES = 2;
 // Array to store multiple characters and their ragdolls
 const characters = [];
 const ragdolls = [];
-const NUM_CHARACTERS = 10;
-const MIN_SPAWN_DISTANCE = 20; // Minimum distance from player
-const MAX_SPAWN_DISTANCE = 120; // Maximum distance from player
+const NUM_CHARACTERS = 100;
+const MIN_SPAWN_DISTANCE = 10;
+const MAX_SPAWN_DISTANCE = 40;
 
 let lastCollisionCheck = 0;
-const COLLISION_CHECK_INTERVAL = 100; // Check every 100ms
+const COLLISION_CHECK_INTERVAL = 33; // Increased check frequency from 100ms to 33ms
 
 // Physics world
 const world = new CANNON.World({
-	gravity: new CANNON.Vec3(0, -9.82, 0),
+	gravity: new CANNON.Vec3(0, -4.91, 0),
 	solver: new CANNON.GSSolver(),
 	iterations: 3,
 	tolerance: 0.001,
@@ -562,10 +650,82 @@ world.addEventListener('beginContact', (event) => {
 });
 
 function updateScoreDisplay() {
-	const clampedScore = Math.max(0, Math.min(9999, score));
-	const displayScore = clampedScore.toString().padStart(4, '0');
-	scoreText.text = displayScore;
+	scoreText.text = score.toString();
 	scoreText.sync();
+}
+
+function updateHealthBar() {
+	const healthPercent = gorillasHealth / MAX_HEALTH;
+	healthBarFill.scale.x = Math.max(0, healthPercent);
+	healthBarFill.position.x = (healthBarWidth * (healthPercent - 1)) / 2;
+	
+	// Update color based on health
+	const hue = healthPercent * 0.3; // Goes from red (0) to green (0.3)
+	healthBarFillMaterial.color.setHSL(hue, 1, 0.5);
+}
+
+function showGameOver(scene, camera) {
+	finalScoreText.text = `Final Score: ${score}`;
+	finalScoreText.sync();
+	gameOverText.sync();
+	playAgainText.sync();
+	
+	// Position panel in front of camera
+	const distance = 2;
+	gameOverPanel.position.copy(camera.position);
+	gameOverPanel.rotation.copy(camera.rotation);
+	gameOverPanel.translateZ(-distance);
+	
+	gameOverPanel.visible = true;
+	
+	// Add click detection for play again button
+	const raycaster = new THREE.Raycaster();
+	const mouse = new THREE.Vector2();
+	
+	function onClick(event) {
+		// Convert mouse position to normalized device coordinates
+		mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+		mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+		
+		raycaster.setFromCamera(mouse, camera);
+		const intersects = raycaster.intersectObject(playAgainButton);
+		
+		if (intersects.length > 0) {
+			resetGame(scene);
+			window.removeEventListener('click', onClick);
+		}
+	}
+	
+	window.addEventListener('click', onClick);
+}
+
+function resetGame(scene) {
+	gorillasHealth = MAX_HEALTH;
+	score = 0;
+	updateHealthBar();
+	updateScoreDisplay();
+	gameOverPanel.visible = false;
+	
+	// Remove all existing ragdolls
+	ragdolls.forEach(ragdoll => {
+		ragdoll.constraints.forEach(constraint => world.removeConstraint(constraint));
+		ragdoll.bodies.forEach(body => world.removeBody(body));
+		scene.remove(ragdoll.group);
+	});
+	ragdolls.length = 0;
+	
+	// Reset all characters
+	characters.forEach(character => {
+		if (!character.isActive) {
+			character.isActive = true;
+			character.model.position.copy(getRandomSpawnPosition());
+			scene.add(character.model);
+			if (character.walkAction) {
+				character.walkAction.reset();
+				character.walkAction.play();
+			}
+		}
+	});
 }
 
 // Function to generate a random spawn position
@@ -577,22 +737,19 @@ function getRandomSpawnPosition() {
 	do {
 		// Generate random angle and distance
 		const angle = Math.random() * Math.PI * 2;
-		const distance =
-			MIN_SPAWN_DISTANCE +
-			Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
+		const distance = MIN_SPAWN_DISTANCE + Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
 
 		// Calculate position
 		position = new THREE.Vector3(
 			Math.cos(angle) * distance,
 			0,
-			Math.sin(angle) * distance,
+			Math.sin(angle) * distance
 		);
 
 		attempts++;
 
-		// If we've tried too many times, just use the last position
 		if (attempts >= maxAttempts) break;
-	} while (position.length() < MIN_SPAWN_DISTANCE); // Ensure minimum distance from origin
+	} while (position.length() < MIN_SPAWN_DISTANCE);
 
 	return position;
 }
@@ -614,7 +771,7 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 	// Load the walking character for each instance
 	for (let i = 0; i < NUM_CHARACTERS; i++) {
 		fbxLoader.load('assets/Walking.fbx', (walkingFbx) => {
-			walkingFbx.scale.setScalar(0.015);
+			walkingFbx.scale.setScalar(0.005);
 
 			// Get random spawn position
 			const spawnPosition = getRandomSpawnPosition();
@@ -629,6 +786,7 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 				punchAction: null,
 				punchCount: 0,
 				isActive: true,
+				isPunching: false
 			};
 			characters.push(character);
 
@@ -659,62 +817,13 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 					// Add mixer event listener for when punch animation completes
 					character.mixer.addEventListener('finished', (e) => {
 						if (e.action === character.punchAction) {
+							// Just increment punch count but don't create ragdoll
 							character.punchCount++;
-
-							if (character.punchCount >= MAX_PUNCHES) {
-								// Get the character's current position
-								const charPosition = new CANNON.Vec3(
-									character.model.position.x,
-									character.model.position.y,
-									character.model.position.z,
-								);
-
-								// Create a new ragdoll at the character's position with 50% larger scale
-								const newRagdoll = createRagdoll(1.75, charPosition);
-								scene.add(newRagdoll.group);
-								ragdolls.push(newRagdoll);
-
-								// Configure ragdoll physics with unique properties
-								newRagdoll.bodies.forEach((body) => {
-									body.mass = 5 + Math.random() * 3; // Random mass between 5-8
-									body.linearDamping = 0.1 + Math.random() * 0.1; // Random damping
-									body.angularDamping = 0.1 + Math.random() * 0.1;
-									body.material = new CANNON.Material({
-										friction: 0.3 + Math.random() * 0.2,
-										restitution: 0.3 + Math.random() * 0.2,
-									});
-									world.addBody(body);
-								});
-
-								// Add constraints to world
-								newRagdoll.constraints.forEach((constraint) => {
-									world.addConstraint(constraint);
-								});
-
-								// Remove the character model from the scene
-								scene.remove(character.model);
-								character.isActive = false;
-
-								// Apply initial forces to make it look more dynamic
-								newRagdoll.bodies.forEach((body) => {
-									const force = new CANNON.Vec3(
-										(Math.random() - 0.5) * 500,
-										Math.random() * 500,
-										(Math.random() - 0.5) * 500,
-									);
-									body.applyForce(force, body.position);
-
-									body.angularVelocity.set(
-										(Math.random() - 0.5) * 5,
-										(Math.random() - 0.5) * 5,
-										(Math.random() - 0.5) * 5,
-									);
-								});
-							} else {
-								// Switch back to walking after punch completes
-								character.walkAction.enabled = true;
-								character.walkAction.play();
-							}
+							character.isPunching = false;
+							
+							// Switch back to walking after punch completes
+							character.walkAction.enabled = true;
+							character.walkAction.play();
 						}
 					});
 				}
@@ -773,10 +882,11 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 		}
 	});
 
-	scene.add(scoreText);
-	scoreText.position.set(0, 0.67, -1.44);
-	scoreText.rotateX(-Math.PI / 3.3);
+	scene.add(uiContainer);
+	scene.add(gameOverPanel);
+	
 	updateScoreDisplay();
+	updateHealthBar();
 
 	// Load and set up positional audio
 	const listener = new THREE.AudioListener();
@@ -804,12 +914,277 @@ function setupScene({ scene, camera, renderer, player, controllers }) {
 		scoreText.add(scoreSound);
 	});
 
+	// Add punch sound - using score.ogg as a fallback but ideally we'd use a punch sound
+	punchSound = new THREE.PositionalAudio(listener);
+	audioLoader.load('assets/score.ogg', (buffer) => {
+		punchSound.setBuffer(buffer);
+		punchSound.setVolume(3.0); // Even louder for more impact
+		punchSound.setPlaybackRate(0.5); // Lower pitch for more "thud" effect
+		scene.add(punchSound);
+	});
+
 	audioLoader.load('assets/soundtrack.mp3', (buffer) => {
 		soundtrack = new THREE.Audio(listener);
 		soundtrack.setBuffer(buffer);
 		soundtrack.loop = true;
 		soundtrack.play();
 	});
+}
+
+// Create an impact effect at the given position
+function createImpactEffect(scene, position) {
+	// Visual shockwave ring
+	const ringGeometry = new THREE.RingGeometry(0.1, 0.2, 32);
+	const ringMaterial = new THREE.MeshBasicMaterial({ 
+		color: 0xff5500,
+		side: THREE.DoubleSide,
+		transparent: true,
+		opacity: 0.8
+	});
+	
+	const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+	ring.position.copy(position);
+	// Orient ring to face camera
+	ring.lookAt(0, position.y, 0);
+	scene.add(ring);
+	
+	// Animate ring expanding
+	gsap.to(ring.scale, {
+		x: 10,
+		y: 10,
+		z: 10,
+		duration: 0.5,
+		ease: "power2.out",
+		onComplete: () => {
+			scene.remove(ring);
+			ringGeometry.dispose();
+			ringMaterial.dispose();
+		}
+	});
+	
+	gsap.to(ringMaterial, {
+		opacity: 0,
+		duration: 0.5
+	});
+	
+	// Create a particle system for the impact
+	const particleCount = 75; // Increased particle count
+	const particleGeometry = new THREE.BufferGeometry();
+	const particlePositions = new Float32Array(particleCount * 3);
+	
+	for (let i = 0; i < particleCount; i++) {
+		particlePositions[i * 3] = 0;
+		particlePositions[i * 3 + 1] = 0;
+		particlePositions[i * 3 + 2] = 0;
+	}
+	
+	particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+	
+	const particleMaterial = new THREE.PointsMaterial({
+		color: 0xff5500, // Changed to orange-red for a more powerful look
+		size: 0.15, // Slightly larger particles
+		blending: THREE.AdditiveBlending,
+		transparent: true,
+		sizeAttenuation: true
+	});
+	
+	const particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+	particleSystem.position.copy(position);
+	scene.add(particleSystem);
+	
+	// Animate particles
+	const velocities = [];
+	for (let i = 0; i < particleCount; i++) {
+		velocities.push({
+			x: (Math.random() - 0.5) * 3, // Increased velocity range
+			y: (Math.random() - 0.5) * 3,
+			z: (Math.random() - 0.5) * 3
+		});
+	}
+	
+	// Use gsap to animate particles expanding outward
+	gsap.to(particleMaterial, {
+		duration: 0.8,
+		opacity: 0,
+		size: 0.05,
+		onUpdate: () => {
+			const positions = particleGeometry.attributes.position.array;
+			
+			for (let i = 0; i < particleCount; i++) {
+				positions[i * 3] += velocities[i].x * 0.15; // Faster movement
+				positions[i * 3 + 1] += velocities[i].y * 0.15;
+				positions[i * 3 + 2] += velocities[i].z * 0.15;
+			}
+			
+			particleGeometry.attributes.position.needsUpdate = true;
+		},
+		onComplete: () => {
+			scene.remove(particleSystem);
+			particleGeometry.dispose();
+			particleMaterial.dispose();
+		}
+	});
+}
+
+function handleCharacterPunch(character, scene, ragdolls, handPosition, controllers) {
+	const charPosition = new CANNON.Vec3(
+		character.model.position.x,
+		character.model.position.y,
+		character.model.position.z
+	);
+	
+	const flyBackDistance = 3; // Slightly increased for better effect
+	const flyUpHeight = 2; // Adjusted for better visibility
+	
+	const punchDirection = new THREE.Vector3()
+		.subVectors(
+			new THREE.Vector3(charPosition.x, charPosition.y, charPosition.z),
+			handPosition
+		)
+		.normalize();
+	
+	// Move the character model immediately in the punch direction
+	character.model.position.add(
+		punchDirection.multiplyScalar(flyBackDistance)
+	);
+	character.model.position.y += flyUpHeight;
+	
+	if (punchSound && !punchSound.isPlaying) {
+		punchSound.position.copy(charPosition);
+		punchSound.setVolume(5.0);
+		punchSound.play();
+		
+		if (controllers) {
+			const controllerToUse = handPosition.equals(rightHandGroup.position) ? 
+				controllers.right : controllers.left;
+				
+			if (controllerToUse && controllerToUse.gamepad) {
+				try {
+					controllerToUse.gamepad.getHapticActuator(0).pulse(1.0, 100);
+				} catch {
+					// do nothing
+				}
+			}
+		}
+	}
+	
+	// Mark character as inactive immediately to prevent double-hits
+	character.isActive = false;
+	
+	// Create ragdoll after a shorter delay
+	setTimeout(() => {
+		// Create ragdoll at the character's current position
+		const newRagdollPosition = new CANNON.Vec3(
+			character.model.position.x,
+			character.model.position.y,
+			character.model.position.z
+		);
+		
+		// Create smaller ragdoll to match character scale
+		const newRagdoll = createRagdoll(0.006, newRagdollPosition);
+		scene.add(newRagdoll.group);
+		ragdolls.push(newRagdoll);
+		
+		// Configure ragdoll physics
+		newRagdoll.bodies.forEach((body) => {
+			body.mass = 1; // Reduced mass for better physics
+			body.linearDamping = 0.1; // Reduced damping for more movement
+			body.angularDamping = 0.1;
+			body.material = new CANNON.Material({
+				friction: 0.4,
+				restitution: 0.3,
+			});
+			world.addBody(body);
+			
+			// Apply stronger initial forces
+			const force = new CANNON.Vec3(
+				punchDirection.x * 1000, // Adjusted force for new mass
+				2000, // Stronger upward force
+				punchDirection.z * 1000
+			);
+			body.applyForce(force, body.position);
+			
+			// Add some spin
+			body.angularVelocity.set(
+				(Math.random() - 0.5) * 15,
+				(Math.random() - 0.5) * 15,
+				(Math.random() - 0.5) * 15
+			);
+		});
+		
+		// Add constraints with proper parameters
+		newRagdoll.constraints.forEach((constraint) => {
+			if (constraint instanceof CANNON.ConeTwistConstraint) {
+				constraint.twistAngle = Math.PI / 8; // Allow more twist
+				constraint.angle = Math.PI / 8; // Allow more cone angle
+			}
+			world.addConstraint(constraint);
+		});
+		
+		// Remove the character model and increment score
+		scene.remove(character.model);
+		score += 1;
+		updateScoreDisplay();
+	}, 50); // Reduced delay for more immediate feedback
+}
+
+function checkHandCollisions(time, rightHandGroup, leftHandGroup, characters, scene, ragdolls, controllers) {
+	// Check collisions every frame instead of using interval
+	// Create bounding boxes for hands with much larger padding for easier collision detection
+	const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup).expandByScalar(1);
+	const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup).expandByScalar(1);
+	
+	// Check right hand first (only if making a fist)
+	if (rightHandIsFist) {
+		characters.forEach((character, index) => {
+			if (!character.isActive) return;
+			
+			// Create character bounding box with larger padding
+			const characterBox = new THREE.Box3().setFromObject(character.model).expandByScalar(1);
+			
+			// Simple distance check first
+			const handPos = new THREE.Vector3();
+			rightHandGroup.getWorldPosition(handPos);
+			const charPos = new THREE.Vector3();
+			character.model.getWorldPosition(charPos);
+			
+			// If within reasonable punch distance
+			if (handPos.distanceTo(charPos) < 3) {
+				if (rightHandBox.intersectsBox(characterBox)) {
+					handleCharacterPunch(character, scene, ragdolls, rightHandGroup.position, controllers);
+					if (scoreSound && !scoreSound.isPlaying) {
+						scoreSound.play();
+					}
+				}
+			}
+		});
+	}
+	
+	// Check left hand (only if making a fist)
+	if (leftHandIsFist) {
+		characters.forEach((character, index) => {
+			if (!character.isActive) return;
+			
+			// Create character bounding box with larger padding
+			const characterBox = new THREE.Box3().setFromObject(character.model).expandByScalar(1);
+			
+			// Simple distance check first
+			const handPos = new THREE.Vector3();
+			leftHandGroup.getWorldPosition(handPos);
+			const charPos = new THREE.Vector3();
+			character.model.getWorldPosition(charPos);
+			
+			// If within reasonable punch distance
+			if (handPos.distanceTo(charPos) < 3) {
+				if (leftHandBox.intersectsBox(characterBox)) {
+					handleCharacterPunch(character, scene, ragdolls, leftHandGroup.position, controllers);
+					if (scoreSound && !scoreSound.isPlaying) {
+						scoreSound.play();
+					}
+				}
+			}
+		});
+	}
 }
 
 function onFrame(
@@ -867,16 +1242,14 @@ function onFrame(
 	characters.forEach((character) => {
 		if (!character.isActive) return;
 
-		// Calculate direction to player
 		const direction = new THREE.Vector3();
 		direction.subVectors(playerPosition, character.model.position).normalize();
 
-		// Calculate distance to player
 		const distance = character.model.position.distanceTo(playerPosition);
 
 		// Move character towards player if not too close
 		if (distance > PUNCH_DISTANCE) {
-			const moveSpeed = 0.03;
+			const moveSpeed = 0.12; // Reduced from 0.25 but still faster than original 0.08
 			character.model.position.add(direction.multiplyScalar(moveSpeed));
 			character.model.lookAt(playerPosition);
 		}
@@ -885,14 +1258,24 @@ function onFrame(
 		if (distance <= PUNCH_DISTANCE) {
 			if (character.walkAction && character.walkAction.isRunning()) {
 				character.walkAction.stop();
-				if (character.punchAction) {
+				if (character.punchAction && !character.isPunching) {
+					character.isPunching = true;
 					character.punchAction.enabled = true;
 					character.punchAction.reset();
 					character.punchAction.play();
+					
+					// Increased damage from punches
+					gorillasHealth -= 2; // Doubled damage
+					updateHealthBar();
+					
+					if (gorillasHealth <= 0) {
+						showGameOver(scene, camera);
+					}
 				}
 			}
 		} else {
-			if (character.punchAction && character.punchAction.isRunning()) {
+			if (character.punchAction && character.isPunching) {
+				character.isPunching = false;
 				character.punchAction.stop();
 				if (character.walkAction) {
 					character.walkAction.enabled = true;
@@ -902,72 +1285,8 @@ function onFrame(
 		}
 	});
 
-	// Check for collision between hands and characters
-	if (time - lastCollisionCheck >= COLLISION_CHECK_INTERVAL) {
-		lastCollisionCheck = time;
-		const rightHandBox = new THREE.Box3().setFromObject(rightHandGroup);
-		const leftHandBox = new THREE.Box3().setFromObject(leftHandGroup);
-
-		characters.forEach((character) => {
-			if (!character.isActive) return;
-
-			const characterBox = new THREE.Box3().setFromObject(character.model);
-
-			if (
-				rightHandBox.intersectsBox(characterBox) ||
-				leftHandBox.intersectsBox(characterBox)
-			) {
-				// Get the character's current position
-				const charPosition = new CANNON.Vec3(
-					character.model.position.x,
-					character.model.position.y,
-					character.model.position.z,
-				);
-
-				// Create a new ragdoll at the character's position
-				const newRagdoll = createRagdoll(1.75, charPosition);
-				scene.add(newRagdoll.group);
-				ragdolls.push(newRagdoll);
-
-				// Configure ragdoll physics with unique properties
-				newRagdoll.bodies.forEach((body) => {
-					body.mass = 5 + Math.random() * 3; // Random mass between 5-8
-					body.linearDamping = 0.1 + Math.random() * 0.1;
-					body.angularDamping = 0.1 + Math.random() * 0.1;
-					body.material = new CANNON.Material({
-						friction: 0.3 + Math.random() * 0.2,
-						restitution: 0.3 + Math.random() * 0.2,
-					});
-					world.addBody(body);
-				});
-
-				// Add constraints to world
-				newRagdoll.constraints.forEach((constraint) => {
-					world.addConstraint(constraint);
-				});
-
-				// Remove the character model from the scene
-				scene.remove(character.model);
-				character.isActive = false;
-
-				// Apply initial forces to make it look more dynamic
-				newRagdoll.bodies.forEach((body) => {
-					const force = new CANNON.Vec3(
-						(Math.random() - 0.5) * 500,
-						Math.random() * 500,
-						(Math.random() - 0.5) * 500,
-					);
-					body.applyForce(force, body.position);
-
-					body.angularVelocity.set(
-						(Math.random() - 0.5) * 5,
-						(Math.random() - 0.5) * 5,
-						(Math.random() - 0.5) * 5,
-					);
-				});
-			}
-		});
-	}
+	// Use the new collision detection function
+	checkHandCollisions(time, rightHandGroup, leftHandGroup, characters, scene, ragdolls, controllers);
 
 	// Update hand physics bodies
 	if (rightHandGroup) {
@@ -990,15 +1309,42 @@ function onFrame(
 		// Swap to fist on trigger press, open on release
 		if (gamepad.getButtonValue(XR_BUTTONS.TRIGGER) > 0.5) {
 			if (!rightHandIsFist && rightHandFistMesh && rightHandOpenMesh) {
+				console.log("Right hand making fist");
 				rightHandGroup.remove(rightHandOpenMesh);
 				rightHandGroup.add(rightHandFistMesh);
 				rightHandIsFist = true;
+				
+				// Add visual cue that hand is in "punch mode"
+				if (rightHandFistMesh) {
+					rightHandFistMesh.traverse((child) => {
+						if (child.isMesh) {
+							// Store original color if not already stored
+							if (!child.userData.originalColor) {
+								child.userData.originalColor = child.material.color.clone();
+							}
+							// Set fist color to indicate "punch mode"
+							child.material.color.set(0xff3300);
+							child.material.emissive = new THREE.Color(0x661100);
+						}
+					});
+				}
 			}
 		} else {
 			if (rightHandIsFist && rightHandFistMesh && rightHandOpenMesh) {
+				console.log("Right hand opening");
 				rightHandGroup.remove(rightHandFistMesh);
 				rightHandGroup.add(rightHandOpenMesh);
 				rightHandIsFist = false;
+				
+				// Restore original colors
+				if (rightHandFistMesh) {
+					rightHandFistMesh.traverse((child) => {
+						if (child.isMesh && child.userData.originalColor) {
+							child.material.color.copy(child.userData.originalColor);
+							child.material.emissive = new THREE.Color(0x000000);
+						}
+					});
+				}
 			}
 		}
 	}
@@ -1017,12 +1363,37 @@ function onFrame(
 				leftHandGroup.remove(leftHandOpenMesh);
 				leftHandGroup.add(leftHandFistMesh);
 				leftHandIsFist = true;
+				
+				// Add visual cue that hand is in "punch mode"
+				if (leftHandFistMesh) {
+					leftHandFistMesh.traverse((child) => {
+						if (child.isMesh) {
+							// Store original color if not already stored
+							if (!child.userData.originalColor) {
+								child.userData.originalColor = child.material.color.clone();
+							}
+							// Set fist color to indicate "punch mode"
+							child.material.color.set(0xff3300);
+							child.material.emissive = new THREE.Color(0x661100);
+						}
+					});
+				}
 			}
 		} else {
 			if (leftHandIsFist && leftHandFistMesh && leftHandOpenMesh) {
 				leftHandGroup.remove(leftHandFistMesh);
 				leftHandGroup.add(leftHandOpenMesh);
 				leftHandIsFist = false;
+				
+				// Restore original colors
+				if (leftHandFistMesh) {
+					leftHandFistMesh.traverse((child) => {
+						if (child.isMesh && child.userData.originalColor) {
+							child.material.color.copy(child.userData.originalColor);
+							child.material.emissive = new THREE.Color(0x000000);
+						}
+					});
+				}
 			}
 		}
 
@@ -1034,6 +1405,13 @@ function onFrame(
 			}
 		}
 	}
+
+	// Update UI container position to follow camera
+	uiContainer.position.copy(camera.position);
+	uiContainer.quaternion.copy(camera.quaternion);
 }
+
+// Also modify the world gravity to make ragdolls fall more naturally
+world.gravity.set(0, -9.82, 0); // Standard Earth gravity
 
 init(setupScene, onFrame);
